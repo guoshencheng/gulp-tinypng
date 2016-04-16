@@ -1,6 +1,5 @@
 // through2 is a thin wrapper around node transform streams
 var through = require('through2');
-var prettyBytes = require('pretty-bytes');
 var gutil = require('gulp-util');
 var mkdirp = require('mkdirp');
 var rmdir = require( 'rmdir' );
@@ -50,7 +49,9 @@ var readTemp = function(filename) {
 };
 
 // Plugin level function (dealing with files)
-function gulpPrefixer(prefixText) {
+function gulpPrefixer(prefixTexts) {
+  var currentPrefixIndex = 0
+  var prefixText = prefixTexts[currentPrefixIndex]
   AUTH_TOKEN = new Buffer('api:' + prefixText).toString('base64')
   if (!prefixText) {
     throw PluginError(PLUGIN_NAME, "Missing prefix text!");
@@ -66,13 +67,20 @@ function gulpPrefixer(prefixText) {
 
     if (file.isBuffer()) {
       var prevLength = file.contents.length;
-      tinypng(file, function(data) {
-        file.contents = data;
-        this.push(file);
-        gutil.log('gulp-tingpng: ', gutil.colors.green('✔ ') + file.relative + ' (saved ' + 
-                  prettyBytes(prevLength - data.length) + ' - ' + ((1 - data.length / prevLength) * 100).toFixed(0) + '%)');
-        return callback();
-      }.bind(this));
+      var cb = function(err, data) {
+        if (err && currentPrefixIndex < prefixTexts.length - 1) {
+          currentPrefixIndex ++;
+          prefixText = prefixTexts[currentPrefixIndex]
+          AUTH_TOKEN = new Buffer('api:' + prefixText).toString('base64')
+          tinypng(file, cb.bind(this))
+        } else {
+          file.contents = data;
+          this.push(file);
+          gutil.log('gulp-tingpng: [compressing]', gutil.colors.green('✔ ') + file.relative + gutil.colors.gray(' (done)'));
+          return callback();
+        }
+      }
+      tinypng(file, cb.bind(this));
     }
 
     if (file.isStream()) {
@@ -112,12 +120,14 @@ function tinypng(file, cb) {
           fs.readFile(TEMP_DIR + filename, function(err, data){
             if (err) {
               gutil.log('[error] :  gulp-tinypng - ', err);
+              cb(err)
             }
-            cb(data);
+            cb(null, data);
           });
         });
       } else {
         gutil.log('[error] : gulp-tinypng - ', results.message);
+        cb(results.error)
       }
     }
   });
